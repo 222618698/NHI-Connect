@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: nhi-connect-db
+    environment:
+      POSTGRES_DB: nhiconnect
+      POSTGRES_USER: nhi
+      POSTGRES_PASSWORD: nhi_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - nhi-data:/var/lib/postgresql/data
+volumes:
+  nhi-data:

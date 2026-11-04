@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: nhi-connect
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nhiconnect
+    username: nhi
+    password: nhi_dev_password
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+
+nhi:
+  cors:
+    allowed-origin: http://localhost:5173

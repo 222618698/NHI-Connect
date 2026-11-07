@@ -1,15 +1,18 @@
 """
 NHI-Connect API integration tests (test level: Integration).
 
-Runs against a live backend seeded with the demo dataset (Flyway V1-V5 + demo accounts) and checks every
+Runs against a live backend seeded with the demo dataset (Flyway V1-V6 + demo accounts) and checks every
 public endpoint, role rule and audit side effect. Each test case is traced to a requirement ID from the
 Design Phase traceability matrix.
 
 Usage:  python tests/api_integration_test.py [base_url] [results.json]
         (default base_url http://localhost:8080). Use a fresh/test database: the tests create data.
+        The demo-account passwords are read from the same environment variables the backend uses to create them:
+        NHI_DEMO_ADMIN_PASSWORD, NHI_DEMO_CLINIC_PASSWORD, NHI_DEMO_CLINICIAN_PASSWORD.
 Only the Python standard library is used.
 """
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -18,6 +21,18 @@ import uuid
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
 OUT = sys.argv[2] if len(sys.argv) > 2 else "api-test-results.json"
+
+
+def env_password(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        sys.exit(f"Set the environment variable {name} to the demo password the backend was started with.")
+    return value
+
+
+ADMIN_PW = env_password("NHI_DEMO_ADMIN_PASSWORD")
+CLINIC_PW = env_password("NHI_DEMO_CLINIC_PASSWORD")
+CLINICIAN_PW = env_password("NHI_DEMO_CLINICIAN_PASSWORD")
 
 DEMO = {  # name, ID number, expected timeline entries (from the Demo Patient Dataset)
     "Bongani Mahlangu": ("8801015800083", 9),
@@ -115,10 +130,10 @@ def _():
 @tc("IT-03", "REQ-012 / Security", "Each demo account signs in and receives its role", "200 + token; roles ADMIN, CLINIC, CLINICIAN")
 def _():
     out = []
-    for key, (u, p, choice, role) in {"admin": ("admin", "Admin@123", "ADMIN", "ADMIN"),
-                                       "clinic": ("braamfontein.clinic", "Clinic@123", "CLINICIAN", "CLINIC"),
-                                       "clin": ("t.moloi", "Clinician@123", "CLINICIAN", "CLINICIAN"),
-                                       "clin2": ("a.khumalo", "Clinician@123", "CLINICIAN", "CLINICIAN")}.items():
+    for key, (u, p, choice, role) in {"admin": ("admin", ADMIN_PW, "ADMIN", "ADMIN"),
+                                       "clinic": ("braamfontein.clinic", CLINIC_PW, "CLINICIAN", "CLINIC"),
+                                       "clin": ("t.moloi", CLINICIAN_PW, "CLINICIAN", "CLINICIAN"),
+                                       "clin2": ("a.khumalo", CLINICIAN_PW, "CLINICIAN", "CLINICIAN")}.items():
         s, body = login(u, p, choice)
         assert s == 200 and body["user"]["role"] == role, (u, s, body)
         S[key] = body["token"]
@@ -130,9 +145,9 @@ def _():
 
 @tc("IT-04", "REQ-012 / Security", "Correct password but wrong 'Sign in as' option is refused", "401 with guidance; no session")
 def _():
-    s, body = login("t.moloi", "Clinician@123", "ADMIN")
+    s, body = login("t.moloi", CLINICIAN_PW, "ADMIN")
     assert s == 401 and "can't sign in as Administrator" in body["message"], (s, body)
-    s2, _ = login("admin", "Admin@123", "CLINICIAN")
+    s2, _ = login("admin", ADMIN_PW, "CLINICIAN")
     assert s2 == 401, s2
     return f"HTTP {s} / {s2}: {body['message']}"
 
@@ -553,6 +568,50 @@ def _():
     return f"lift {s1}; Umhlanga record {s2}; active restrictions 0"
 
 
+# ---------------------------------------------------------------- DEF-013: sign-in lock-out
+
+
+@tc("IT-40", "REQ-012 / Security", "Five failed sign-ins lock the account temporarily; an admin password reset unlocks it", "Attempts 1-5 HTTP 401; 6th (even with the right password) 429; after reset 200")
+def _():
+    s, p, _ = call("POST", "/engine/api/v1/admin/users", S["admin"], body={
+        "username": "lock.test", "fullName": "Lock-out Test Nurse", "password": "RightPass2026", "role": "CLINICIAN", "facilityId": S["fac"]})
+    assert s == 201, (s, p)
+    uid = js(p)["id"]
+    wrong = [login("lock.test", f"guess-{i}", "CLINICIAN")[0] for i in range(5)]
+    s6, body6 = login("lock.test", "RightPass2026", "CLINICIAN")
+    assert wrong == [401] * 5 and s6 == 429 and "Too many failed sign-in attempts" in body6["message"], (wrong, s6, body6)
+    other, _ = login("t.moloi", CLINICIAN_PW, "CLINICIAN")
+    r, _, _ = call("POST", f"/engine/api/v1/admin/users/{uid}/password", S["admin"], body={"password": "AfterReset2026"})
+    s7, _ = login("lock.test", "AfterReset2026", "CLINICIAN")
+    assert (other, r, s7) == (200, 204, 200), (other, r, s7)
+    return f"attempts 1-5: {wrong}; 6th with correct password: HTTP {s6} ({body6['message']}); other user unaffected {other}; after admin reset {s7}"
+
+# ---------------------------------------------------------------- REQ-001 / REQ-010
+
+
+@tc("IT-41", "REQ-001", "Facility registry records how each facility connects (adapter type)", "Seeded hospitals keep their adapter type; a newly onboarded clinic is MANUAL_ENTRY")
+def _():
+    facs = js(call("GET", "/engine/api/v1/admin/facilities", S["admin"])[1])
+    types = {f["name"]: f["connectionType"] for f in facs}
+    assert all(types.values()), types
+    assert types["Khayelitsha Test Clinic"] == "MANUAL_ENTRY", types
+    kinds = sorted(set(types.values()))
+    assert len(kinds) >= 2, kinds
+    s, _, _ = call("GET", "/engine/api/v1/admin/facilities", S["clin"])
+    assert s == 403, s
+    return f"{len(facs)} facilities, connection types {kinds}; clinician access {s}"
+
+
+@tc("IT-42", "REQ-010", "Administrator overview is aggregate only: no patient names or ID numbers", "Counts present; none of the 6 demo patients' names or ID numbers in the response")
+def _():
+    s, p, _ = call("GET", "/engine/api/v1/admin/overview", S["admin"])
+    text = p.decode("utf-8")
+    o = js(p)
+    leaked = [n for n, (idn, _) in DEMO.items() if n in text or idn in text]
+    assert s == 200 and o["stats"]["patients"] >= 6 and not leaked, (s, o["stats"], leaked)
+    return f"patients {o['stats']['patients']}, facilities {o['stats']['facilities']}, record views today {o['stats']['recordViewsToday']}; identifiers found: none"
+
+
 @tc("IT-27", "Security", "Sign-out revokes the token", "Token valid before, 401 after")
 def _():
     s0, _, _ = call("GET", "/security/api/v1/auth/me", S["clin2"])
@@ -575,7 +634,7 @@ def _():
               ("USER_DISABLED", "SUCCESS"), ("PASSWORD_RESET", "SUCCESS"), ("LOGOUT", "SUCCESS"),
               ("DUPLICATE_TEST_WARNING", "SUCCESS"), ("REFERRAL_SUMMARY", "SUCCESS"), ("FHIR_EXPORT", "SUCCESS"),
               ("CONSENT_ADDED", "SUCCESS"), ("CONSENT_BLOCKED", "FLAGGED"), ("BREAK_GLASS", "FLAGGED"),
-              ("BREAK_GLASS_REVIEWED", "SUCCESS"), ("CONSENT_LIFTED", "SUCCESS")}
+              ("BREAK_GLASS_REVIEWED", "SUCCESS"), ("CONSENT_LIFTED", "SUCCESS"), ("LOGIN_LOCKED", "FLAGGED")}
     missing = needed - kinds
     assert not missing, missing
     view = next(e for e in log if e["eventType"] == "RECORD_VIEW" and e["username"] == "t.moloi")

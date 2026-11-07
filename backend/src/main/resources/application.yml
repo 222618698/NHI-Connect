@@ -24,3 +24,6 @@ nhi:
     allowed-origin: http://localhost:5173
   auth:
     session-hours: 8
+    max-failed-sign-ins: 5   # then the username is locked ...
+    lockout-minutes: 15      # ... for this long (an admin password reset also unlocks)
+# Demo-account passwords are NOT kept here: see DemoUserSeeder (environment variables NHI_DEMO_*_PASSWORD).

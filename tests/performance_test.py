@@ -8,6 +8,7 @@ Measures, against a running local backend:
 Usage: python tests/performance_test.py [base_url] [results.json]
 """
 import json
+import os
 import statistics
 import sys
 import time
@@ -16,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
 OUT = sys.argv[2] if len(sys.argv) > 2 else "performance-results.json"
+CLINICIAN_PW = os.environ.get("NHI_DEMO_CLINICIAN_PASSWORD", "").strip() or sys.exit(
+    "Set NHI_DEMO_CLINICIAN_PASSWORD to the demo clinician password the backend was started with.")
 IDS = ["8801015800083", "9509185412089", "7203150460080", "5811305129087", "0106220785088", "1509055401086"]
 
 
@@ -41,7 +44,7 @@ def summary(samples):
 
 
 def login():
-    return req("/security/api/v1/auth/login", body={"username": "t.moloi", "password": "Clinician@123", "role": "CLINICIAN"})
+    return req("/security/api/v1/auth/login", body={"username": "t.moloi", "password": CLINICIAN_PW, "role": "CLINICIAN"})
 
 
 # warm-up so JIT compilation and connection pools don't distort the first samples

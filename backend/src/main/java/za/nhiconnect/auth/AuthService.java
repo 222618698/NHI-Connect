@@ -42,11 +42,28 @@ public class AuthService {
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final AuditService audit;
     private final int sessionHours;
+    private final LoginThrottle throttle;
+    private final int lockoutMinutes;
 
-    public AuthService(JdbcTemplate jdbc, AuditService audit, @Value("${nhi.auth.session-hours:8}") int sessionHours) {
+    public AuthService(JdbcTemplate jdbc, AuditService audit, @Value("${nhi.auth.session-hours:8}") int sessionHours,
+                       @Value("${nhi.auth.max-failed-sign-ins:5}") int maxFailedSignIns,
+                       @Value("${nhi.auth.lockout-minutes:15}") int lockoutMinutes) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.sessionHours = sessionHours;
+        this.lockoutMinutes = lockoutMinutes;
+        this.throttle = new LoginThrottle(maxFailedSignIns, java.time.Duration.ofMinutes(lockoutMinutes), java.time.Clock.systemUTC());
+    }
+
+    /** Lifts a sign-in lock-out, e.g. after an administrator resets the password. */
+    public void clearSignInLock(String username) {
+        if (username != null) throttle.reset(username.trim().toLowerCase());
+    }
+
+    private static String tooManyMessage(java.time.Duration left) {
+        long minutes = Math.max(1, (left.toSeconds() + 59) / 60);
+        return "Too many failed sign-in attempts. Try again in " + minutes + " minute" + (minutes == 1 ? "" : "s")
+                + ", or ask your administrator to reset your password.";
     }
 
     public String hash(String rawPassword) {
@@ -75,6 +92,14 @@ public class AuthService {
      */
     public Optional<LoginResult> login(String username, String password, String expectedRole) {
         String normalised = username == null ? "" : username.trim().toLowerCase();
+
+        // DEF-013: refuse further guesses while the username is locked, without checking the password.
+        var locked = throttle.lockedFor(normalised);
+        if (locked.isPresent()) {
+            audit.logAnonymous(normalised, "LOGIN", "Refused: temporarily locked after repeated failed sign-ins", AuditService.FLAGGED);
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, tooManyMessage(locked.get()));
+        }
+
         var rows = jdbc.queryForList("SELECT user_id, password_hash, active, role FROM app_user WHERE username = ?", normalised);
 
         boolean ok;
@@ -89,8 +114,13 @@ public class AuthService {
 
         if (!ok) {
             audit.logAnonymous(normalised, "LOGIN", "Username: " + normalised, AuditService.FAILED);
+            if (throttle.recordFailure(normalised)) {
+                audit.logAnonymous(normalised, "LOGIN_LOCKED",
+                        "Locked for " + lockoutMinutes + " minutes after " + throttle.maxFailures() + " failed sign-ins", AuditService.FLAGGED);
+            }
             return Optional.empty();
         }
+        throttle.reset(normalised);
 
         String actualRole = (String) rows.get(0).get("role");
         if (expectedRole != null && !expectedRole.isBlank()) {

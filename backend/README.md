@@ -5,8 +5,10 @@ Spring Boot 3 + PostgreSQL. Setup, configuration, tests and the full API list ar
 
 ## Quick start
 1. Start PostgreSQL: `docker compose up -d` (or use a local PostgreSQL 16 with role/database `nhi`/`nhiconnect`).
-2. Start the API: `mvn spring-boot:run` — Flyway creates the schema (V1–V6) and loads the fictional demo data.
-3. Run the unit tests: `mvn test`.
+2. Set the demo-account passwords (first start only; see the project README §3):
+   `NHI_DEMO_ADMIN_PASSWORD`, `NHI_DEMO_CLINIC_PASSWORD`, `NHI_DEMO_CLINICIAN_PASSWORD`.
+3. Start the API: `mvn spring-boot:run` — Flyway creates the schema (V1–V6) and loads the fictional demo data.
+4. Run the unit tests: `mvn test`.
 
 ## Try it
 Every endpoint except sign-in needs a bearer token:

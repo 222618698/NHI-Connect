@@ -209,6 +209,7 @@ public class AdminController {
         if (updated == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found.");
         auth.endAllSessions(userId);
         String username = jdbc.queryForObject("SELECT username FROM app_user WHERE user_id = ?", String.class, userId);
+        auth.clearSignInLock(username);   // a reset also lifts a sign-in lock-out (DEF-013)
         audit.log(admin, "PASSWORD_RESET", null, "Account: " + username, AuditService.SUCCESS);
     }
 

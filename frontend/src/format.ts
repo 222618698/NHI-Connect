@@ -44,6 +44,7 @@ export const ROLE_LABEL: Record<Role, string> = { ADMIN: 'Administrator', CLINIC
 
 export const EVENT_LABEL: Record<string, string> = {
   LOGIN: 'Sign In',
+  LOGIN_LOCKED: 'Sign-In Locked',
   LOGOUT: 'Sign Out',
   PATIENT_SEARCH: 'Patient Search',
   RECORD_VIEW: 'Patient Record View',

@@ -46,9 +46,18 @@ npm run dev
 ```
 
 On first start with an empty user table the backend creates four demo accounts
-(`admin`, `braamfontein.clinic`, `t.moloi`, `a.khumalo`). Their passwords are set in
-`backend/src/main/java/za/nhiconnect/auth/DemoUserSeeder.java`; **change them** (Admin Console → Clinics & Users →
-Reset password) before the system holds any real data.
+(`admin`, `braamfontein.clinic`, `t.moloi`, `a.khumalo`). **No password is stored in the code**: set them as
+environment variables (at least 8 characters each) in the terminal before the first `mvn spring-boot:run`:
+
+```powershell
+$env:NHI_DEMO_ADMIN_PASSWORD     = "<choose one>"   # admin
+$env:NHI_DEMO_CLINIC_PASSWORD    = "<choose one>"   # braamfontein.clinic
+$env:NHI_DEMO_CLINICIAN_PASSWORD = "<choose one>"   # t.moloi and a.khumalo
+```
+
+(bash: `export NHI_DEMO_ADMIN_PASSWORD=...`). An account whose variable is missing is not created and a warning is
+logged. Once the accounts exist, the variables are no longer needed; manage passwords in the Admin Console
+(Clinics & Users → Reset password).
 
 Sign-in: choose **Clinician / Nurse** for clinician, nurse and clinic-staff accounts, or **Administrator** for admins.
 The account decides which portal opens.
@@ -60,6 +69,9 @@ The account decides which portal opens.
 | Database URL / user / password | `spring.datasource.*` in `backend/src/main/resources/application.yml` | `localhost:5432/nhiconnect`, `nhi` |
 | Allowed browser origins (comma-separated) | `nhi.cors.allowed-origin` | `http://localhost:5173` |
 | Session lifetime (hours) | `nhi.auth.session-hours` | `8` |
+| Failed sign-ins before a temporary lock-out | `nhi.auth.max-failed-sign-ins` | `5` |
+| Lock-out length (minutes); an admin password reset also unlocks | `nhi.auth.lockout-minutes` | `15` |
+| Demo-account passwords (first start only) | environment variables `NHI_DEMO_ADMIN_PASSWORD`, `NHI_DEMO_CLINIC_PASSWORD`, `NHI_DEMO_CLINICIAN_PASSWORD` | none — accounts are skipped if unset |
 | Max upload size | `spring.servlet.multipart.max-file-size` | `10MB` |
 | Backend URL used by the dev server | environment variable `NHI_API` | `http://localhost:8080` |
 
@@ -69,12 +81,13 @@ Any property can be overridden on the command line, e.g.
 ## 5. Tests
 
 ```bash
-cd backend && mvn test                                   # 43 unit tests (JUnit 5)
-python tests/api_integration_test.py http://localhost:8080   # 39 API integration tests
+cd backend && mvn test                                   # 51 unit tests (JUnit 5)
+python tests/api_integration_test.py http://localhost:8080   # 42 API integration tests
 python tests/performance_test.py http://localhost:8080       # latency / throughput measurement
 ```
 
-The integration tests create patients, accounts and audit events, so run them against a **fresh or test database**,
+The integration and performance tests sign in with the demo accounts, so set the same three `NHI_DEMO_*`
+environment variables in the terminal that runs them. The integration tests create patients, accounts and audit events, so run them against a **fresh or test database**,
 never one holding real data. A separate schema works well:
 
 ```bash

@@ -400,6 +400,159 @@ def _():
     return f"reset {s}; old {s1}; new {s2}"
 
 
+# ---------------------------------------------------------------- REQ-004: duplicate-test check (Clinical Decision Support)
+
+
+def dup(token, pid, test, date="2026-11-07"):
+    s, p, _ = call("POST", "/engine/api/v1/decision-support/check-duplicate", token, body={"patientId": pid, "testName": test, "orderDate": date})
+    return s, js(p)
+
+
+@tc("IT-31", "REQ-004", "Duplicate-test warning for an equivalent recent result, across naming and facilities", "warning naming prior test, date and facility")
+def _():
+    s, d = dup(S["clin"], S["pid"]["Naledi Mokoena"], "FBC")
+    assert s == 200 and d["warning"] and d["priorResult"]["facilityName"] == "Braamfontein General Hospital" and d["priorResult"]["daysAgo"] == 2, (s, d)
+    s2, d2 = dup(S["clin2"], S["pid"]["Pieter van der Berg"], "Lipid Panel")
+    assert d2["warning"] and d2["windowDays"] == 180 and d2["priorResult"]["facilityName"] == "Table Bay Provincial Hospital", d2
+    return (f"FBC: '{d['priorResult']['testName']}' {d['priorResult']['daysAgo']} days ago at {d['priorResult']['facilityName']}; "
+            f"Lipid Panel (Umhlanga clinician): {d2['priorResult']['daysAgo']} days ago at {d2['priorResult']['facilityName']} (window {d2['windowDays']} d)")
+
+
+@tc("IT-32", "REQ-004", "No warning when the test was never done or is outside its window", "warning = false")
+def _():
+    _, a = dup(S["clin"], S["pid"]["Naledi Mokoena"], "Lipid Panel")
+    _, b = dup(S["clin"], S["pid"]["Pieter van der Berg"], "Troponin T")
+    _, c = dup(S["clin"], S["pid"]["Bongani Mahlangu"], "Full Blood Count")
+    assert not a["warning"] and not b["warning"] and not c["warning"], (a, b, c)
+    return "never done: no warning; Troponin from 2023 (1-day window): no warning; FBC from Apr 2026 (30-day window): no warning"
+
+# ---------------------------------------------------------------- REQ-009: referral summary
+
+
+@tc("IT-33", "REQ-009", "One-click referral summary is a valid PDF", "200, application/pdf, %PDF signature")
+def _():
+    s, data, h = call("GET", f"/engine/api/v1/patients/{S['pid']['Bongani Mahlangu']}/referral-summary", S["clin"])
+    assert s == 200 and h.get("Content-Type", "").startswith("application/pdf") and data[:5] == b"%PDF-" and len(data) > 1500, (s, h, data[:20])
+    assert b"%%EOF" in data[-1024:]
+    return f"{len(data)} byte PDF; Content-Disposition: {h.get('Content-Disposition')}"
+
+# ---------------------------------------------------------------- REQ-005 / REQ-008: FHIR R4 export
+
+
+def bundle(pid, profile):
+    s, data, h = call("GET", f"/engine/api/v1/fhir/Patient/{pid}/$everything?profile={profile}", S["clin"])
+    assert s == 200 and h.get("Content-Type", "").startswith("application/fhir+json"), (s, h)
+    return data, json.loads(data)
+
+
+def kinds(b):
+    from collections import Counter
+    return Counter(e["resource"]["resourceType"] for e in b["entry"])
+
+
+@tc("IT-34", "REQ-005", "Full FHIR R4 Bundle: correct resources, SA ID identifier, every reference resolves", "Patient 1, Encounter 4, Observation 3, MedicationStatement 2, Organization 3; 0 dangling references")
+def _():
+    raw, b = bundle(S["pid"]["Bongani Mahlangu"], "full")
+    assert b["resourceType"] == "Bundle" and b["type"] == "collection", b.get("type")
+    k = kinds(b)
+    assert (k["Patient"], k["Encounter"], k["Observation"], k["MedicationStatement"], k["Organization"]) == (1, 4, 3, 2, 3), k
+    pat = next(e["resource"] for e in b["entry"] if e["resource"]["resourceType"] == "Patient")
+    assert pat["identifier"][0]["value"] == "8801015800083" and pat["gender"] == "male" and pat["birthDate"] == "1988-01-01", pat
+    full_urls = {e["fullUrl"] for e in b["entry"]}
+    refs = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            if "reference" in x:
+                refs.append(x["reference"])
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(b["entry"])
+    dangling = [r for r in refs if "https://nhi-connect.local/fhir/" + r not in full_urls]
+    assert not dangling, dangling
+    S["fhir_full"] = raw
+    return f"{len(b['entry'])} entries {dict(k)}; {len(refs)} references, 0 dangling; identifier 8801015800083"
+
+
+@tc("IT-35", "REQ-005, REQ-008", "Lite FHIR profile keeps clinical data but drops narrative and organisations", "Same clinical resources; no text/Organization/DocumentReference; smaller payload")
+def _():
+    import gzip
+    raw, b = bundle(S["pid"]["Bongani Mahlangu"], "lite")
+    k = kinds(b)
+    assert (k["Patient"], k["Encounter"], k["Observation"], k["MedicationStatement"]) == (1, 4, 3, 2) and not k["Organization"] and not k["DocumentReference"], k
+    # Narrative = a resource-level "text" element (with an XHTML "div"); CodeableConcept.text is allowed.
+    narratives = [e["resource"]["resourceType"] for e in b["entry"] if "text" in e["resource"]]
+    assert not narratives and '"div"' not in raw.decode(), narratives
+    full = S["fhir_full"]
+    gf, gl = len(gzip.compress(full)), len(gzip.compress(raw))
+    assert len(raw) < len(full)
+    S["fhir_sizes"] = (len(full), len(raw), gf, gl)
+    return f"full {len(full)} B ({gf} B gzipped) vs lite {len(raw)} B ({gl} B gzipped): {100 - round(100 * len(raw) / len(full))}% smaller ({100 - round(100 * gl / gf)}% gzipped)"
+
+# ---------------------------------------------------------------- REQ-006: consent and break-glass
+
+
+@tc("IT-36", "REQ-006", "Consent restriction blocks other facilities on every read path, not the recording clinic", "403 CONSENT_RESTRICTED (break-glass offered) at Umhlanga; 200 at Braamfontein")
+def _():
+    pid = S["pid"]["Sipho Ndlovu"]
+    s0, _, _ = call("POST", f"/engine/api/v1/clinic/patients/{pid}/consent", S["clinic"], body={"excludedFacilityId": S["clinic_user"]["facilityId"], "reason": "x"})
+    assert s0 == 400, f"excluding own clinic should be refused, got {s0}"
+    s, p, _ = call("POST", f"/engine/api/v1/clinic/patients/{pid}/consent", S["clinic"], body={"excludedFacilityId": None, "reason": "Patient's guardian asked that the record stay at Braamfontein"})
+    assert s == 201, (s, p)
+    S["restriction"] = js(p)["id"]
+    s1, p1, _ = call("GET", f"/engine/api/v1/patients/{pid}/record", S["clin2"])
+    body = js(p1)
+    assert s1 == 403 and body["code"] == "CONSENT_RESTRICTED" and body["breakGlassAvailable"] is True, (s1, body)
+    others = [call("GET", f"/engine/api/v1/patients/{pid}/documents", S["clin2"])[0],
+              call("GET", f"/engine/api/v1/patients/{pid}/referral-summary", S["clin2"])[0],
+              call("GET", f"/engine/api/v1/fhir/Patient/{pid}/$everything", S["clin2"])[0],
+              dup(S["clin2"], pid, "Peak Expiratory Flow")[0]]
+    assert others == [403, 403, 403, 403], others
+    s2, _, _ = call("GET", f"/engine/api/v1/patients/{pid}/record", S["clin"])
+    assert s2 == 200, s2
+    return f"own-clinic exclusion 400; Umhlanga record 403 + documents/referral/FHIR/duplicate-check {others}; Braamfontein clinician {s2}"
+
+
+@tc("IT-37", "REQ-006", "Break-glass: validated, grants one request only, flagged in the audit log", "400 invalid; 200 once; next request 403 again")
+def _():
+    pid = S["pid"]["Sipho Ndlovu"]
+    path = f"/engine/api/v1/patients/{pid}/break-glass"
+    s1, _, _ = call("POST", path, S["clin2"], body={"reasonCode": "LIFE_THREATENING", "freeText": "short"})
+    s2, _, _ = call("POST", path, S["clin2"], body={"reasonCode": "BORED", "freeText": "No real reason given here"})
+    s3, p3, _ = call("POST", path, S["clin2"], body={"reasonCode": "LIFE_THREATENING", "freeText": "Severe asthma attack, child cannot speak; need preventer and steroid history"})
+    s4, _, _ = call("GET", f"/engine/api/v1/patients/{pid}/record", S["clin2"])
+    s5, _, _ = call("POST", path, S["clin"], body={"reasonCode": "OTHER", "freeText": "No restriction applies to me here"})
+    s6, _, _ = call("POST", path, S["clinic"], body={"reasonCode": "OTHER", "freeText": "Clinic staff are not clinicians"})
+    rec = js(p3)
+    assert (s1, s2, s3, s4, s5, s6) == (400, 400, 200, 403, 400, 403) and len(rec["timeline"]) == 5, (s1, s2, s3, s4, s5, s6)
+    return f"short text {s1}; bad code {s2}; valid {s3} ({len(rec['timeline'])} entries); next normal request {s4}; unrestricted user {s5}; clinic staff {s6}"
+
+
+@tc("IT-38", "REQ-006", "Administrator reviews the break-glass event", "Pending event listed; review 204; second review 404; non-admin 403")
+def _():
+    events = js(call("GET", "/engine/api/v1/admin/break-glass", S["admin"])[1])
+    ev = next(e for e in events if e["patientName"] == "Sipho Ndlovu" and e["reviewStatus"] == "PENDING_REVIEW")
+    s1, _, _ = call("POST", f"/engine/api/v1/admin/break-glass/{ev['id']}/review", S["admin"], body={"decision": "JUSTIFIED", "note": "Genuine emergency"})
+    s2, _, _ = call("POST", f"/engine/api/v1/admin/break-glass/{ev['id']}/review", S["admin"], body={"decision": "NOT_JUSTIFIED"})
+    s3, _, _ = call("GET", "/engine/api/v1/admin/break-glass", S["clinic"])
+    after = next(e for e in js(call("GET", "/engine/api/v1/admin/break-glass", S["admin"])[1]) if e["id"] == ev["id"])
+    assert (s1, s2, s3) == (204, 404, 403) and after["reviewStatus"] == "JUSTIFIED" and after["reviewedBy"] == "System Administrator", (s1, s2, s3, after)
+    return f"event by {ev['userName']} ({ev['facilityName']}) reviewed JUSTIFIED {s1}; re-review {s2}; clinic access {s3}"
+
+
+@tc("IT-39", "REQ-006", "Lifting the restriction restores normal access", "Umhlanga clinician 200 after lift")
+def _():
+    pid = S["pid"]["Sipho Ndlovu"]
+    s1, _, _ = call("DELETE", f"/engine/api/v1/clinic/patients/{pid}/consent/{S['restriction']}", S["clinic"])
+    s2, _, _ = call("GET", f"/engine/api/v1/patients/{pid}/record", S["clin2"])
+    remaining = js(call("GET", f"/engine/api/v1/clinic/patients/{pid}/consent", S["clinic"])[1])
+    assert (s1, s2) == (204, 200) and remaining == [], (s1, s2, remaining)
+    return f"lift {s1}; Umhlanga record {s2}; active restrictions 0"
+
+
 @tc("IT-27", "Security", "Sign-out revokes the token", "Token valid before, 401 after")
 def _():
     s0, _, _ = call("GET", "/security/api/v1/auth/me", S["clin2"])
@@ -419,7 +572,10 @@ def _():
               ("RECORD_VIEW", "SUCCESS"), ("PATIENT_CREATED", "SUCCESS"), ("PATIENT_LINKED", "SUCCESS"),
               ("ENTRY_ADDED", "SUCCESS"), ("DOCUMENT_UPLOADED", "SUCCESS"), ("DOCUMENT_VIEW", "SUCCESS"),
               ("UPDATE_REVIEWED", "SUCCESS"), ("CLINIC_CREATED", "SUCCESS"), ("USER_CREATED", "SUCCESS"),
-              ("USER_DISABLED", "SUCCESS"), ("PASSWORD_RESET", "SUCCESS"), ("LOGOUT", "SUCCESS")}
+              ("USER_DISABLED", "SUCCESS"), ("PASSWORD_RESET", "SUCCESS"), ("LOGOUT", "SUCCESS"),
+              ("DUPLICATE_TEST_WARNING", "SUCCESS"), ("REFERRAL_SUMMARY", "SUCCESS"), ("FHIR_EXPORT", "SUCCESS"),
+              ("CONSENT_ADDED", "SUCCESS"), ("CONSENT_BLOCKED", "FLAGGED"), ("BREAK_GLASS", "FLAGGED"),
+              ("BREAK_GLASS_REVIEWED", "SUCCESS"), ("CONSENT_LIFTED", "SUCCESS")}
     missing = needed - kinds
     assert not missing, missing
     view = next(e for e in log if e["eventType"] == "RECORD_VIEW" and e["username"] == "t.moloi")

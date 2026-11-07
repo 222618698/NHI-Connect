@@ -46,11 +46,14 @@ public class ClinicController {
     private final JdbcTemplate jdbc;
     private final AuditService audit;
     private final RecordEntryService entries;
+    private final za.nhiconnect.service.ConsentService consent;
 
-    public ClinicController(JdbcTemplate jdbc, AuditService audit, RecordEntryService entries) {
+    public ClinicController(JdbcTemplate jdbc, AuditService audit, RecordEntryService entries,
+                            za.nhiconnect.service.ConsentService consent) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.entries = entries;
+        this.consent = consent;
     }
 
     // ------------------------------------------------------------------ overview: staff + who signed in
@@ -92,6 +95,43 @@ public class ClinicController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void review(HttpServletRequest request, @PathVariable UUID updateId) {
         entries.markReviewed(CurrentUser.require(request, CurrentUser.CLINIC), updateId);
+    }
+
+    // ------------------------------------------------------------------ consent (REQ-006)
+
+    public record NewRestriction(
+            UUID excludedFacilityId, // null = hide from every facility except this clinic
+            @NotBlank(message = "Record the patient's reason or request.") @Size(max = 300) String reason) {}
+    public record FacilityName(UUID id, String name) {}
+
+    @GetMapping("/facilities")
+    public List<FacilityName> facilities(HttpServletRequest request) {
+        CurrentUser.require(request, CurrentUser.CLINIC);
+        return jdbc.query("SELECT facility_id, name FROM hospital_facility ORDER BY name",
+                (rs, i) -> new FacilityName(rs.getObject(1, UUID.class), rs.getString(2)));
+    }
+
+    @GetMapping("/patients/{patientId}/consent")
+    public List<za.nhiconnect.service.ConsentService.Restriction> restrictions(HttpServletRequest request, @PathVariable UUID patientId) {
+        CurrentUser.require(request, CurrentUser.CLINIC);
+        entries.requirePatient(patientId);
+        return consent.active(patientId);
+    }
+
+    @PostMapping("/patients/{patientId}/consent")
+    @ResponseStatus(HttpStatus.CREATED)
+    public za.nhiconnect.service.ConsentService.Restriction restrict(HttpServletRequest request, @PathVariable UUID patientId,
+                                                                    @Valid @RequestBody NewRestriction body) {
+        CurrentUser user = CurrentUser.require(request, CurrentUser.CLINIC);
+        entries.requirePatient(patientId);
+        entries.ensureLinked(patientId, user.facilityId(), null);
+        return consent.add(user, patientId, body.excludedFacilityId(), body.reason());
+    }
+
+    @DeleteMapping("/patients/{patientId}/consent/{restrictionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void lift(HttpServletRequest request, @PathVariable UUID patientId, @PathVariable UUID restrictionId) {
+        consent.lift(CurrentUser.require(request, CurrentUser.CLINIC), patientId, restrictionId);
     }
 
     // ------------------------------------------------------------------ patients

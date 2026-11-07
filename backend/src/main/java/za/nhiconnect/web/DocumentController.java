@@ -26,16 +26,20 @@ public class DocumentController {
     private final JdbcTemplate jdbc;
     private final AuditService audit;
     private final RecordEntryService entries;
+    private final za.nhiconnect.service.ConsentService consent;
 
-    public DocumentController(JdbcTemplate jdbc, AuditService audit, RecordEntryService entries) {
+    public DocumentController(JdbcTemplate jdbc, AuditService audit, RecordEntryService entries,
+                              za.nhiconnect.service.ConsentService consent) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.entries = entries;
+        this.consent = consent;
     }
 
     @GetMapping("/patients/{patientId}/documents")
     public List<RecordEntryService.DocumentInfo> documents(HttpServletRequest request, @PathVariable UUID patientId) {
-        CurrentUser.require(request, CurrentUser.CLINICIAN, CurrentUser.CLINIC);
+        CurrentUser user = CurrentUser.require(request, CurrentUser.CLINICIAN, CurrentUser.CLINIC);
+        consent.requireAccess(user, patientId);
         return entries.listDocuments(patientId);
     }
 
@@ -54,6 +58,7 @@ public class DocumentController {
         var rows = jdbc.queryForList("SELECT patient_id, file_name, content_type, content FROM patient_document WHERE document_id = ?", documentId);
         if (rows.isEmpty()) return ResponseEntity.notFound().build();
         var row = rows.get(0);
+        consent.requireAccess(user, (UUID) row.get("patient_id"));
         String fileName = (String) row.get("file_name");
         audit.log(user, "DOCUMENT_VIEW", (UUID) row.get("patient_id"), fileName, AuditService.SUCCESS);
         return ResponseEntity.ok()

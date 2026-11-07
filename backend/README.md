@@ -5,7 +5,7 @@ Spring Boot 3 + PostgreSQL. Setup, configuration, tests and the full API list ar
 
 ## Quick start
 1. Start PostgreSQL: `docker compose up -d` (or use a local PostgreSQL 16 with role/database `nhi`/`nhiconnect`).
-2. Start the API: `mvn spring-boot:run` — Flyway creates the schema (V1–V5) and loads the fictional demo data.
+2. Start the API: `mvn spring-boot:run` — Flyway creates the schema (V1–V6) and loads the fictional demo data.
 3. Run the unit tests: `mvn test`.
 
 ## Try it
@@ -18,7 +18,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8080/engine/api/v1/pat
 ```
 
 ## Still to build (see the Implementation & Testing report, section 2.2)
-- Hospital Adapters (file / database / API ingestion) and FHIR resource validation (HAPI FHIR), tiered profiles
+- Hospital Adapters (file / database / API ingestion); FHIR ingestion and validation (HAPI FHIR / official validator)
 - Probabilistic MPI matching with a low-confidence review queue
-- Consent & break-glass, duplicate-test check (Clinical Decision Support), referral summary
+- Clinician-level consent restrictions (facility-level consent and break-glass are done)
 - Policy-analyst analytics; SMS account activation

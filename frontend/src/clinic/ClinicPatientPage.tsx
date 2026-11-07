@@ -4,6 +4,7 @@ import { api } from '../api';
 import DocumentList from '../components/DocumentList';
 import { AddEntryForm, UploadForm } from '../components/RecordForms';
 import TimelineItem from '../components/TimelineItem';
+import ConsentCard from './ConsentCard';
 import { Card, ErrorBox } from '../components/ui';
 import { useLoad } from '../useLoad';
 
@@ -51,6 +52,10 @@ export default function ClinicPatientPage() {
             </div>
           </div>
 
+          <div className="mb-8">
+            <ConsentCard patientId={patientId} />
+          </div>
+
           <div className="mb-4 flex items-baseline justify-between">
             <h3 className="text-[19px] font-bold">National record timeline</h3>
             <span className="text-[13px] text-ink-faint">Most recent first &darr;</span>
@@ -61,6 +66,7 @@ export default function ClinicPatientPage() {
               <TimelineItem
                 key={entry.id}
                 entry={entry}
+                patientId={patientId}
                 expanded={expandedId === entry.id}
                 onToggle={() => setExpandedId((cur) => (cur === entry.id ? null : entry.id))}
               />

@@ -150,6 +150,41 @@ export interface NewEntry {
   detail: string;
 }
 
+/** REQ-004: result of the duplicate-test check. */
+export interface DuplicateCheck {
+  warning: boolean;
+  windowDays: number;
+  priorResult: { testName: string; date: string; facilityName: string; value: string | null; daysAgo: number } | null;
+}
+
+/** REQ-006: an active consent restriction recorded at a clinic. */
+export interface ConsentRestriction {
+  id: string;
+  patientId: string;
+  ownerFacilityId: string;
+  ownerFacilityName: string;
+  excludedFacilityId: string | null;
+  excludedFacilityName: string | null;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface BreakGlassEvent {
+  id: string;
+  patientId: string;
+  patientName: string;
+  userName: string;
+  facilityName: string;
+  reasonCode: string;
+  freeText: string;
+  createdAt: string;
+  reviewStatus: 'PENDING_REVIEW' | 'JUSTIFIED' | 'NOT_JUSTIFIED';
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+}
+
 /** Something a clinician/nurse added to a record, sent to their clinic for review. */
 export interface RecordUpdate {
   id: string;

@@ -69,8 +69,8 @@ Any property can be overridden on the command line, e.g.
 ## 5. Tests
 
 ```bash
-cd backend && mvn test                                   # 26 unit tests (JUnit 5)
-python tests/api_integration_test.py http://localhost:8080   # 30 API integration tests
+cd backend && mvn test                                   # 43 unit tests (JUnit 5)
+python tests/api_integration_test.py http://localhost:8080   # 39 API integration tests
 python tests/performance_test.py http://localhost:8080       # latency / throughput measurement
 ```
 
@@ -98,6 +98,12 @@ All endpoints except sign-in need `Authorization: Bearer <token>` from the sign-
 | `GET /engine/api/v1/patients/{id}/record` | clinician, clinic | Unified cross-facility timeline |
 | `POST /engine/api/v1/patients/{id}/entries` | clinician, clinic | Add visit / lab result / medication |
 | `GET, POST /engine/api/v1/patients/{id}/documents`, `GET /engine/api/v1/documents/{id}` | clinician, clinic | Patient documents |
+| `POST /engine/api/v1/decision-support/check-duplicate` | clinician, clinic | Duplicate-test warning (REQ-004) |
+| `GET /engine/api/v1/patients/{id}/referral-summary` | clinician, clinic | Referral summary PDF (REQ-009) |
+| `GET /engine/api/v1/fhir/Patient/{id}/$everything?profile=full\|lite` | clinician, clinic | FHIR R4 Bundle export (REQ-005) |
+| `POST /engine/api/v1/patients/{id}/break-glass` | clinician | Emergency access to a consent-restricted record (REQ-006) |
+| `GET, POST /engine/api/v1/clinic/patients/{id}/consent`, `DELETE …/consent/{rid}` | clinic | Record / lift a patient's consent restriction |
+| `GET /engine/api/v1/admin/break-glass`, `POST …/break-glass/{id}/review` | admin | Review break-glass events |
 | `GET /engine/api/v1/clinic/overview`, `/clinic/patients`, `/clinic/updates` | clinic | Clinic dashboard, patients, updates to review |
 | `POST /engine/api/v1/clinic/patients`, `/clinic/updates/{id}/review` | clinic | Manual intake; mark update reviewed |
 | `GET /engine/api/v1/admin/overview`, `/admin/audit`, `/admin/updates` | admin | Who is signed in, audit log, updates |
@@ -111,10 +117,12 @@ backend/src/main/java/za/nhiconnect/
   config/      CORS + interceptor registration
   domain/      JPA entities (Patient, HospitalFacility, Encounter, Observation, Medication)
   repository/  Spring Data repositories (read side)
-  service/     PatientRecordService (unified timeline), RecordEntryService (manual intake, documents, review)
-  util/        SaIdNumber, FileNames (pure, unit-tested helpers)
+  service/     PatientRecordService (unified timeline), RecordEntryService (manual intake, documents, review),
+               ConsentService (consent & break-glass), DecisionSupportService (duplicate-test check),
+               ReferralSummaryService (PDF), FhirExportService (FHIR R4, full/lite)
+  util/        SaIdNumber, FileNames, TestEquivalence (pure, unit-tested helpers)
   web/         REST controllers + ApiExceptionHandler
-backend/src/main/resources/db/migration/   Flyway V1–V5
+backend/src/main/resources/db/migration/   Flyway V1–V6
 frontend/src/
   pages/       Clinician Portal (login, search, record)
   clinic/      Clinic portal (overview, patients, patient page)

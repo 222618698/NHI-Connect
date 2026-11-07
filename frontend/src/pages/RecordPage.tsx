@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Header from '../components/Header';
 import TimelineItem from '../components/TimelineItem';
 import DocumentList from '../components/DocumentList';
+import BreakGlassPanel from '../components/BreakGlassPanel';
 import { AddEntryForm, UploadForm } from '../components/RecordForms';
-import { api } from '../api';
+import { api, isConsentRestricted, saveBlob, type ApiError } from '../api';
 import { useAuth } from '../auth';
 import type { PatientDocument, UnifiedRecord } from '../types';
 
@@ -16,13 +17,19 @@ export default function RecordPage() {
   const { user } = useAuth();
   const [record, setRecord] = useState<UnifiedRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [restricted, setRestricted] = useState<ApiError | null>(null);
+  const [emergency, setEmergency] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [docs, setDocs] = useState<PatientDocument[] | null>(null);
   const [updating, setUpdating] = useState<UpdateTab | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const loadRecord = useCallback(() => {
     if (!patientId) return;
-    api.getRecord(patientId).then(setRecord).catch((e: Error) => setError(e.message));
+    api.getRecord(patientId)
+      .then((r) => { setRecord(r); setRestricted(null); })
+      .catch((e: Error) => (isConsentRestricted(e) ? setRestricted(e) : setError(e.message)));
   }, [patientId]);
   const loadDocs = useCallback(() => {
     if (!patientId) return;
@@ -32,6 +39,24 @@ export default function RecordPage() {
   useEffect(() => { loadRecord(); loadDocs(); }, [loadRecord, loadDocs]);
 
   const sentNote = `Sent to ${user?.facilityName ?? 'your clinic'} and the administrator for review.`;
+
+  const download = async (kind: 'referral' | 'fhir-full' | 'fhir-lite') => {
+    if (!patientId || !record) return;
+    setDownloading(kind);
+    setDownloadError(null);
+    const surname = record.patient.fullName.split(' ').slice(-1)[0].toLowerCase();
+    try {
+      if (kind === 'referral') saveBlob(await api.referralSummary(patientId), `referral-summary-${surname}.pdf`);
+      else {
+        const profile = kind === 'fhir-full' ? 'full' : 'lite';
+        saveBlob(await api.fhirExport(patientId, profile), `fhir-${profile}-${surname}.json`);
+      }
+    } catch (e) {
+      setDownloadError((e as Error).message);
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   const back = (
     <button onClick={() => navigate('/')} className="whitespace-nowrap rounded-lg border border-[#D6DFE6] bg-white px-3.5 py-2 text-[13px] font-semibold text-ink-soft hover:bg-canvas">
@@ -50,15 +75,33 @@ export default function RecordPage() {
     </button>
   );
 
+  const smallBtn = 'whitespace-nowrap rounded-lg border border-[#D6DFE6] bg-white px-3 py-2 text-[12.5px] font-semibold text-ink-soft hover:border-teal hover:text-teal disabled:opacity-60';
+
   return (
     <div className="min-h-screen">
       <Header left={back} />
       <main className="mx-auto max-w-[820px] px-6 pb-20 pt-12">
         {error && <p className="text-sm text-[#9C3B3B]">{error}</p>}
-        {!record && !error && <p className="text-sm text-ink-faint">Loading unified record&hellip;</p>}
+        {!record && !error && !restricted && <p className="text-sm text-ink-faint">Loading unified record&hellip;</p>}
+
+        {restricted && !record && patientId && (
+          <BreakGlassPanel
+            patientId={patientId}
+            message={restricted.message}
+            allowed={restricted.breakGlassAvailable}
+            onGranted={(r) => { setRecord(r); setEmergency(true); }}
+          />
+        )}
 
         {record && patientId && (
           <>
+            {emergency && (
+              <div role="alert" className="mb-5 rounded-xl border-2 border-[#E3B3B3] bg-[#FBE7E7] px-5 py-3.5 text-[13px] text-[#9C3B3B]">
+                <b>Emergency (break-glass) access.</b> The patient restricted this record; your access has been logged and flagged for
+                administrator review. It applies to this view only &mdash; leaving the page restores the restriction.
+              </div>
+            )}
+
             <section className="mb-5 rounded-2xl border border-line bg-white px-8 py-7">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -69,12 +112,26 @@ export default function RecordPage() {
                     <span className="font-mono">National ID: {record.patient.nationalId}</span>
                   </div>
                 </div>
-                {updating === null && (
+                {updating === null && !emergency && (
                   <button onClick={() => setUpdating('entry')} className="whitespace-nowrap rounded-lg bg-teal px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-teal-dark">
                     + Update Record
                   </button>
                 )}
               </div>
+              {!emergency && (
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+                  <button onClick={() => download('referral')} disabled={downloading !== null} className={smallBtn}>
+                    {downloading === 'referral' ? 'Preparing…' : '⤓ Referral Summary (PDF)'}
+                  </button>
+                  <button onClick={() => download('fhir-full')} disabled={downloading !== null} className={smallBtn}>
+                    {downloading === 'fhir-full' ? 'Preparing…' : '⤓ FHIR R4 (full)'}
+                  </button>
+                  <button onClick={() => download('fhir-lite')} disabled={downloading !== null} className={smallBtn}>
+                    {downloading === 'fhir-lite' ? 'Preparing…' : '⤓ FHIR R4 (lite, low bandwidth)'}
+                  </button>
+                  {downloadError && <span className="text-xs text-[#9C3B3B]">{downloadError}</span>}
+                </div>
+              )}
             </section>
 
             {updating !== null && (
@@ -112,7 +169,7 @@ export default function RecordPage() {
               <p className="text-[13px] leading-normal text-amber-ink">{record.completenessNotice}</p>
             </div>
 
-            {docs && docs.length > 0 && (
+            {!emergency && docs && docs.length > 0 && (
               <section className="mb-8">
                 <h2 className="mb-3 text-[19px] font-bold">Documents ({docs.length})</h2>
                 <DocumentList docs={docs} />
@@ -129,6 +186,7 @@ export default function RecordPage() {
                 <TimelineItem
                   key={entry.id}
                   entry={entry}
+                  patientId={emergency ? undefined : patientId}
                   expanded={expandedId === entry.id}
                   onToggle={() => setExpandedId((cur) => (cur === entry.id ? null : entry.id))}
                 />

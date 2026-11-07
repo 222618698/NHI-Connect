@@ -1,9 +1,18 @@
 import type {
-  AdminOverview, AuditRow, ClinicOverview, ClinicPatient, Facility, LoginResult, NewEntry, NewPatient,
-  NewUserAccount, PatientDocument, PatientSummary, RecordUpdate, Role, SessionUser, UnifiedRecord, UserAccount,
+  AdminOverview, AuditRow, BreakGlassEvent, ClinicOverview, ClinicPatient, ConsentRestriction, DuplicateCheck, Facility,
+  LoginResult, NewEntry, NewPatient, NewUserAccount, PatientDocument, PatientSummary, RecordUpdate, Role, SessionUser,
+  UnifiedRecord, UserAccount,
 } from './types';
 
-export class NotFoundError extends Error {}
+/** Any failed API call. `code` is set for special cases, e.g. CONSENT_RESTRICTED (REQ-006). */
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public code?: string, public breakGlassAvailable = false) {
+    super(message);
+  }
+}
+export class NotFoundError extends ApiError {}
+
+export const isConsentRestricted = (e: unknown): e is ApiError => e instanceof ApiError && e.code === 'CONSENT_RESTRICTED';
 
 const TOKEN_KEY = 'nhi.token';
 
@@ -36,7 +45,9 @@ async function request(url: string, init: RequestInit = {}): Promise<Response> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const message = body.message ?? `Request failed (${res.status})`;
-    throw res.status === 404 ? new NotFoundError(message) : new Error(message);
+    throw res.status === 404
+      ? new NotFoundError(message, 404)
+      : new ApiError(message, res.status, body.code, Boolean(body.breakGlassAvailable));
   }
   return res;
 }
@@ -97,4 +108,37 @@ export const api = {
   },
 
   adminUpdates: () => getJson<RecordUpdate[]>('/engine/api/v1/admin/updates'),
+
+  // REQ-004 duplicate-test check, REQ-009 referral summary, REQ-005 FHIR export
+  checkDuplicate: (patientId: string, testName: string, orderDate?: string) =>
+    sendJson<DuplicateCheck>('POST', '/engine/api/v1/decision-support/check-duplicate', { patientId, testName, orderDate }),
+  referralSummary: async (patientId: string) =>
+    (await request(`/engine/api/v1/patients/${patientId}/referral-summary`)).blob(),
+  fhirExport: async (patientId: string, profile: 'full' | 'lite') =>
+    (await request(`/engine/api/v1/fhir/Patient/${patientId}/$everything?profile=${profile}`)).blob(),
+
+  // REQ-006 consent and break-glass
+  breakGlass: (patientId: string, reasonCode: string, freeText: string) =>
+    sendJson<UnifiedRecord>('POST', `/engine/api/v1/patients/${patientId}/break-glass`, { reasonCode, freeText }),
+  clinicFacilities: () => getJson<{ id: string; name: string }[]>('/engine/api/v1/clinic/facilities'),
+  consentList: (patientId: string) => getJson<ConsentRestriction[]>(`/engine/api/v1/clinic/patients/${patientId}/consent`),
+  consentAdd: (patientId: string, excludedFacilityId: string | null, reason: string) =>
+    sendJson<ConsentRestriction>('POST', `/engine/api/v1/clinic/patients/${patientId}/consent`, { excludedFacilityId, reason }),
+  consentLift: (patientId: string, restrictionId: string) =>
+    request(`/engine/api/v1/clinic/patients/${patientId}/consent/${restrictionId}`, { method: 'DELETE' }).then(() => undefined),
+  breakGlassEvents: () => getJson<BreakGlassEvent[]>('/engine/api/v1/admin/break-glass'),
+  reviewBreakGlass: (id: string, decision: 'JUSTIFIED' | 'NOT_JUSTIFIED', note: string) =>
+    sendJson<void>('POST', `/engine/api/v1/admin/break-glass/${id}/review`, { decision, note }),
 };
+
+/** Saves a downloaded blob as a file in the browser. */
+export function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

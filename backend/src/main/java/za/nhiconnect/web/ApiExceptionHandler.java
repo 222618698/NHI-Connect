@@ -36,4 +36,11 @@ public class ApiExceptionHandler {
     public ResponseEntity<Map<String, String>> tooLarge(MaxUploadSizeExceededException ex) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("message", "Files must be 10 MB or smaller."));
     }
+
+    /** REQ-006: a consent restriction blocks this user; the UI offers break-glass when allowed. */
+    @ExceptionHandler(za.nhiconnect.service.ConsentRestrictedException.class)
+    public ResponseEntity<Map<String, Object>> consent(za.nhiconnect.service.ConsentRestrictedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                "message", ex.getMessage(), "code", "CONSENT_RESTRICTED", "breakGlassAvailable", ex.breakGlassAvailable()));
+    }
 }

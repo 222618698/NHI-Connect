@@ -59,11 +59,15 @@ public class AdminController {
 
     private final za.nhiconnect.service.RecordEntryService entries;
 
-    public AdminController(JdbcTemplate jdbc, AuthService auth, AuditService audit, za.nhiconnect.service.RecordEntryService entries) {
+    private final za.nhiconnect.service.ConsentService consent;
+
+    public AdminController(JdbcTemplate jdbc, AuthService auth, AuditService audit, za.nhiconnect.service.RecordEntryService entries,
+                           za.nhiconnect.service.ConsentService consent) {
         this.jdbc = jdbc;
         this.auth = auth;
         this.audit = audit;
         this.entries = entries;
+        this.consent = consent;
     }
 
     // ------------------------------------------------------------------ overview
@@ -214,6 +218,24 @@ public class AdminController {
     public List<za.nhiconnect.service.RecordEntryService.RecordUpdate> updates(HttpServletRequest request) {
         CurrentUser.require(request, CurrentUser.ADMIN);
         return entries.listUpdates(null, 100);
+    }
+
+    // ------------------------------------------------------------------ break-glass review (REQ-006)
+
+    public record BreakGlassDecision(
+            @NotBlank @Pattern(regexp = "JUSTIFIED|NOT_JUSTIFIED", message = "Decision must be JUSTIFIED or NOT_JUSTIFIED.") String decision,
+            @Size(max = 500) String note) {}
+
+    @GetMapping("/break-glass")
+    public List<za.nhiconnect.service.ConsentService.BreakGlassEvent> breakGlass(HttpServletRequest request) {
+        CurrentUser.require(request, CurrentUser.ADMIN);
+        return consent.breakGlassEvents(200);
+    }
+
+    @PostMapping("/break-glass/{eventId}/review")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reviewBreakGlass(HttpServletRequest request, @PathVariable UUID eventId, @Valid @RequestBody BreakGlassDecision body) {
+        consent.review(CurrentUser.require(request, CurrentUser.ADMIN), eventId, body.decision(), body.note());
     }
 
     // ------------------------------------------------------------------ audit trail

@@ -1,7 +1,7 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api } from '../api';
-import { todayIso } from '../format';
-import type { EncounterType, EntryType, NewEntry } from '../types';
+import { fmtShort, todayIso } from '../format';
+import type { DuplicateCheck, EncounterType, EntryType, NewEntry } from '../types';
 import { ErrorBox, Field, SuccessBox, inputCls, primaryBtn } from './ui';
 
 /** Forms for adding to a patient's record. Used by clinic staff and by clinicians/nurses. */
@@ -27,17 +27,31 @@ interface FormProps {
   savedNote?: string;
 }
 
+/** REQ-004: advisory warning that an equivalent test result already exists. */
+export function DuplicateWarning({ check, children }: { check: DuplicateCheck; children?: ReactNode }) {
+  const p = check.priorResult!;
+  return (
+    <div role="alert" className="rounded-lg border border-amber-line bg-amber-tint px-4 py-3 text-[13px] text-amber-ink">
+      <p className="font-bold">&#9888; Possible duplicate test</p>
+      <p className="mt-1">
+        <b>{p.testName}</b> was already done {p.daysAgo === 0 ? 'today' : `${p.daysAgo} day${p.daysAgo === 1 ? '' : 's'} ago`} ({fmtShort(p.date)}) at{' '}
+        <b>{p.facilityName}</b>{p.value ? <>: {p.value.trim().replace(/\.+$/, '')}</> : null}. Results for this test are usually valid for {check.windowDays} days.
+      </p>
+      {children && <div className="mt-2.5 flex flex-wrap gap-2">{children}</div>}
+    </div>
+  );
+}
+
 export function AddEntryForm({ patientId, onSaved, savedNote }: FormProps) {
   const blank: NewEntry = { type: 'LAB', date: todayIso(), encounterType: 'OUTPATIENT', title: '', detail: '' };
   const [e, setE] = useState<NewEntry>(blank);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [duplicate, setDuplicate] = useState<DuplicateCheck | null>(null);
   const meta = ENTRY_TYPES.find((t) => t.value === e.type)!;
 
-  const submit = async (ev: FormEvent) => {
-    ev.preventDefault();
-    if (!e.title.trim()) return setError('Enter a title.');
+  const save = async () => {
     setBusy(true);
     setError(null);
     setSaved(null);
@@ -45,6 +59,7 @@ export function AddEntryForm({ patientId, onSaved, savedNote }: FormProps) {
       await api.addEntry(patientId, { ...e, encounterType: e.type === 'ENCOUNTER' ? e.encounterType : null });
       setSaved(`${meta.label} saved to the patient's record.${savedNote ? ` ${savedNote}` : ''}`);
       setE({ ...blank, type: e.type, date: e.date });
+      setDuplicate(null);
       onSaved();
     } catch (err) {
       setError((err as Error).message);
@@ -52,6 +67,31 @@ export function AddEntryForm({ patientId, onSaved, savedNote }: FormProps) {
       setBusy(false);
     }
   };
+
+  const submit = async (ev: FormEvent) => {
+    ev.preventDefault();
+    if (!e.title.trim()) return setError('Enter a title.');
+    // Clinical Decision Support: warn before recording a test that duplicates a recent result (advisory only).
+    if (e.type === 'LAB' && !duplicate) {
+      setBusy(true);
+      try {
+        const check = await api.checkDuplicate(patientId, e.title.trim(), e.date);
+        if (check.warning) {
+          setDuplicate(check);
+          setSaved(null);
+          return;
+        }
+      } catch (err) {
+        setError((err as Error).message);
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    await save();
+  };
+
+  const edit = (patch: Partial<NewEntry>) => { setE((x) => ({ ...x, ...patch })); setDuplicate(null); };
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
@@ -62,7 +102,7 @@ export function AddEntryForm({ patientId, onSaved, savedNote }: FormProps) {
             type="button"
             role="radio"
             aria-checked={e.type === t.value}
-            onClick={() => { setE((x) => ({ ...x, type: t.value })); setSaved(null); }}
+            onClick={() => { edit({ type: t.value }); setSaved(null); }}
             className={'rounded-lg border py-2 text-[13px] font-semibold ' + (e.type === t.value ? 'border-teal bg-teal text-white' : 'border-[#D6DFE6] text-ink-muted hover:border-teal')}
           >
             {t.label}
@@ -71,7 +111,7 @@ export function AddEntryForm({ patientId, onSaved, savedNote }: FormProps) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={e.type === 'MEDICATION' ? 'Start date' : e.type === 'LAB' ? 'Date of test' : 'Date'} htmlFor={`edate-${patientId}`}>
-          <input id={`edate-${patientId}`} type="date" max={todayIso()} value={e.date} onChange={(x) => setE((y) => ({ ...y, date: x.target.value }))} className={inputCls} />
+          <input id={`edate-${patientId}`} type="date" max={todayIso()} value={e.date} onChange={(x) => edit({ date: x.target.value })} className={inputCls} />
         </Field>
         {e.type === 'ENCOUNTER' && (
           <Field label="Visit type" htmlFor={`evtype-${patientId}`}>
@@ -82,14 +122,25 @@ export function AddEntryForm({ patientId, onSaved, savedNote }: FormProps) {
         )}
       </div>
       <Field label={e.type === 'LAB' ? 'Test' : 'Title'} htmlFor={`etitle-${patientId}`}>
-        <input id={`etitle-${patientId}`} value={e.title} onChange={(x) => setE((y) => ({ ...y, title: x.target.value }))} placeholder={meta.titleHint} className={inputCls} maxLength={200} />
+        <input id={`etitle-${patientId}`} value={e.title} onChange={(x) => edit({ title: x.target.value })} placeholder={meta.titleHint} className={inputCls} maxLength={200} />
       </Field>
       <Field label={meta.detailLabel} htmlFor={`edetail-${patientId}`}>
         <textarea id={`edetail-${patientId}`} rows={4} value={e.detail} placeholder={meta.detailHint} onChange={(x) => setE((y) => ({ ...y, detail: x.target.value }))} className={inputCls} maxLength={4000} />
       </Field>
       {error && <ErrorBox>{error}</ErrorBox>}
       {saved && <SuccessBox>{saved}</SuccessBox>}
-      <div><button type="submit" disabled={busy} className={primaryBtn}>{busy ? 'Saving…' : `Save ${meta.label}`}</button></div>
+      {duplicate ? (
+        <DuplicateWarning check={duplicate}>
+          <button type="button" disabled={busy} onClick={save} className="rounded-lg bg-[#B07A12] px-4 py-2 text-[13px] font-semibold text-white hover:opacity-90">
+            {busy ? 'Saving…' : 'Save anyway'}
+          </button>
+          <button type="button" onClick={() => setDuplicate(null)} className="rounded-lg border border-amber-line bg-white px-4 py-2 text-[13px] font-semibold text-amber-ink">
+            Cancel
+          </button>
+        </DuplicateWarning>
+      ) : (
+        <div><button type="submit" disabled={busy} className={primaryBtn}>{busy ? 'Saving…' : `Save ${meta.label}`}</button></div>
+      )}
     </form>
   );
 }

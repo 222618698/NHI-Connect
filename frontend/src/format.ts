@@ -58,7 +58,22 @@ export const EVENT_LABEL: Record<string, string> = {
   USER_ENABLED: 'Account Enabled',
   PASSWORD_RESET: 'Password Reset',
   UPDATE_REVIEWED: 'Clinician Update Reviewed',
+  DUPLICATE_TEST_WARNING: 'Duplicate-Test Warning',
+  REFERRAL_SUMMARY: 'Referral Summary Generated',
+  FHIR_EXPORT: 'FHIR Export',
+  CONSENT_ADDED: 'Consent Restriction Added',
+  CONSENT_LIFTED: 'Consent Restriction Lifted',
+  CONSENT_BLOCKED: 'Access Blocked by Consent',
+  BREAK_GLASS: 'Break-Glass Access',
+  BREAK_GLASS_REVIEWED: 'Break-Glass Reviewed',
 };
+
+export const BREAK_GLASS_REASONS: { code: string; label: string }[] = [
+  { code: 'LIFE_THREATENING', label: 'Life-threatening emergency' },
+  { code: 'UNCONSCIOUS_PATIENT', label: 'Patient unconscious / cannot consent' },
+  { code: 'URGENT_CONTINUITY_OF_CARE', label: 'Urgent continuity of care' },
+  { code: 'OTHER', label: 'Other (explain below)' },
+];
 
 export const PROVINCES = [
   'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo',

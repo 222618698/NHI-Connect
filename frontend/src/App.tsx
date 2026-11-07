@@ -9,6 +9,7 @@ import ClinicsPage from './admin/ClinicsPage';
 import OnboardingPage from './admin/OnboardingPage';
 import MappingPage from './admin/MappingPage';
 import AuditLogPage from './admin/AuditLogPage';
+import BreakGlassPage from './admin/BreakGlassPage';
 import ClinicLayout from './clinic/ClinicLayout';
 import ClinicOverviewPage from './clinic/ClinicOverviewPage';
 import ClinicPatientsPage from './clinic/ClinicPatientsPage';
@@ -34,6 +35,7 @@ export default function App() {
           <Route index element={<AdminOverviewPage />} />
           <Route path="clinics" element={<ClinicsPage />} />
           <Route path="audit" element={<AuditLogPage />} />
+          <Route path="break-glass" element={<BreakGlassPage />} />
           <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="mapping" element={<MappingPage />} />
         </Route>

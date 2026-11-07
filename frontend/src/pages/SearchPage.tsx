@@ -3,7 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import { api, NotFoundError } from '../api';
 
-const RECENT = [{ name: 'Bongani Mahlangu', idNumber: '8801015800083' }];
+const RECENT = [
+  { name: 'Bongani Mahlangu', idNumber: '8801015800083' },
+  { name: 'Naledi Mokoena', idNumber: '9509185412089' },
+  { name: 'Thandeka Zulu', idNumber: '7203150460080' },
+  { name: 'Pieter van der Berg', idNumber: '5811305129087' },
+  { name: 'Lerato Molefe', idNumber: '0106220785088' },
+  { name: 'Sipho Ndlovu', idNumber: '1509055401086' },
+];
 
 export default function SearchPage() {
   const navigate = useNavigate();

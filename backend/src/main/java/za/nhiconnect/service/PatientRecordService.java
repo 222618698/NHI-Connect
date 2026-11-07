@@ -73,7 +73,9 @@ public class PatientRecordService {
 
     private TimelineEntryDto fromMedication(Medication m) {
         HospitalFacility f = m.getFacility();
-        var start = m.getStartDate().atStartOfDay(ZoneId.of("Africa/Johannesburg")).toOffsetDateTime();
+        // Medications store a date only. Place them at midday so they follow that morning's visit and labs
+        // on the timeline instead of jumping ahead of them at midnight.
+        var start = m.getStartDate().atTime(12, 0).atZone(ZoneId.of("Africa/Johannesburg")).toOffsetDateTime();
         return new TimelineEntryDto(m.getId(), "MEDICATION", start, m.getDisplayName(), m.getDosage(),
                 f.getName(), f.getShortName(), f.getProvince(), f.getLastSyncedAt());
     }

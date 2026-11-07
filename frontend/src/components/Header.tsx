@@ -3,7 +3,7 @@ import { useAuth } from '../auth';
 import Logo from './Logo';
 
 export default function Header({ left }: { left?: ReactNode }) {
-  const { username, logout } = useAuth();
+  const { user, logout } = useAuth();
   return (
     <header className="flex items-center justify-between gap-4 border-b border-line bg-white px-6 py-4 sm:px-10">
       {left ?? (
@@ -16,7 +16,7 @@ export default function Header({ left }: { left?: ReactNode }) {
       )}
       <div className="flex items-center gap-4">
         <span className="hidden text-sm text-ink-soft sm:inline">
-          Dr. {username} <span className="text-ink-faint">&middot; Clinician</span>
+          {user?.fullName} <span className="text-ink-faint">&middot; {user?.facilityName ?? 'Clinician'}</span>
         </span>
         <button onClick={logout} className="whitespace-nowrap rounded-lg border border-[#D6DFE6] bg-white px-4 py-2 text-[13px] font-semibold text-ink-muted hover:bg-canvas">
           Log Out

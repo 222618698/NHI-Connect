@@ -14,7 +14,13 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
 
 nhi:
   cors:
     allowed-origin: http://localhost:5173
+  auth:
+    session-hours: 8

@@ -1,19 +1,50 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { api, setUnauthorizedHandler, tokenStore } from './api';
+import type { Role, SessionUser } from './types';
 
-// Step 1: local-only sign-in. Step 2 replaces this with JWT from /security/api/v1/auth/login.
 interface AuthState {
-  username: string | null;
-  login: (username: string) => void;
+  user: SessionUser | null;
+  /** True while an existing session is being checked on page load. */
+  checking: boolean;
+  /** Notice shown on the sign-in page, e.g. after a session expires. */
+  notice: string | null;
+  login: (username: string, password: string, role: Role) => Promise<void>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [username, setUsername] = useState<string | null>(() => sessionStorage.getItem('nhi.user'));
-  const login = (u: string) => { sessionStorage.setItem('nhi.user', u); setUsername(u); };
-  const logout = () => { sessionStorage.removeItem('nhi.user'); setUsername(null); };
-  return <AuthContext.Provider value={{ username, login, logout }}>{children}</AuthContext.Provider>;
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [checking, setChecking] = useState(() => tokenStore.get() !== null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      setNotice('Your session has ended. Please sign in again.');
+    });
+    if (!tokenStore.get()) return;
+    api.me()
+      .then(setUser)
+      .catch(() => tokenStore.clear())
+      .finally(() => setChecking(false));
+  }, []);
+
+  const login = async (username: string, password: string, role: Role) => {
+    const result = await api.login(username, password, role);
+    tokenStore.set(result.token);
+    setNotice(null);
+    setUser(result.user);
+  };
+
+  const logout = () => {
+    api.logout().catch(() => {});
+    tokenStore.clear();
+    setUser(null);
+  };
+
+  return <AuthContext.Provider value={{ user, checking, notice, login, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
